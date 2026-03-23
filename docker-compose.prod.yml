@@ -1,0 +1,76 @@
+version: "3.8"
+
+services:
+  # ── Go Backend API ──
+  backend:
+    build: .
+    restart: always
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-airconnect}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379"
+      JWT_SECRET: "${JWT_SECRET:-CHANGE-ME-use-64-random-chars}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-CHANGE-ME-refresh-64-random-chars}"
+      MQTT_BROKER_URL: "tcp://mosquitto:1883"
+      MQTT_ADMIN_USER: "${MQTT_ADMIN_USER:-airconnect}"
+      MQTT_ADMIN_PASS: "${MQTT_ADMIN_PASS:-airconnect}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-gpt-4o}"
+      STORAGE_PATH: "/data/storage"
+    volumes:
+      - backend_storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mosquitto:
+        condition: service_started
+
+  # ── PostgreSQL Database ──
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: "${POSTGRES_DB:-airconnect}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # No ports exposed externally — only backend connects via Docker network
+
+  # ── Redis Cache ──
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redisdata:/data
+    # No ports exposed externally
+
+  # ── MQTT Broker ──
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: always
+    ports:
+      - "${MQTT_PORT:-1883}:1883"      # TCP — ESP32 devices connect here
+      - "${MQTT_TLS_PORT:-8883}:8883"  # TLS — production devices
+      - "${MQTT_WS_PORT:-9001}:9001"   # WebSocket — web clients
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/acls.conf:/mosquitto/config/acls.conf
+      - ./mosquitto/passwords:/mosquitto/config/passwords
+      - ./mosquitto/certs:/mosquitto/certs:ro
+      - mosquitto_data:/mosquitto/data
+
+volumes:
+  pgdata:
+  redisdata:
+  mosquitto_data:
+  backend_storage:
